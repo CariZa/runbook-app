@@ -1,4 +1,4 @@
-# Runbook app — handoff
+# Runbook app — spec and wireframes
 
 Wireframes and spec for a local runbook app: write ops runbooks as ordered shell steps,
 run them one at a time or all at once, keep the output, share as Markdown.

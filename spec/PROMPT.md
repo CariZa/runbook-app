@@ -4,10 +4,10 @@ Paste this as your first message, from inside `runbook-generator/`.
 
 ---
 
-I'm building a local runbook app. Everything you need is in `handoff/`:
+I'm building a local runbook app. Everything you need is in `spec/`:
 
-- `handoff/SPEC.md` — data model, run semantics, screen list, Markdown format, open questions
-- `handoff/wireframes.html` — every screen, one self-contained file, open it in a browser
+- `spec/SPEC.md` — data model, run semantics, screen list, Markdown format, open questions
+- `spec/wireframes.html` — every screen, one self-contained file, open it in a browser
 
 Read both before writing code. Screens are referenced by the badge printed on them (`2a`,
 `4a`, `6b`). The wireframes are low-fidelity by intent: take layout, hierarchy, and states
