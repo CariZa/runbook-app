@@ -88,11 +88,11 @@ user can still read it, exactly as with any file in your home directory.
 ## Built with Claude
 
 This app was written with [Claude Code](https://claude.com/claude-code), from a spec and
-wireframes in [`handoff/`](handoff/). It isn't AI-assisted autocomplete over a human-written
+wireframes in [`spec/`](spec/). It isn't AI-assisted autocomplete over a human-written
 codebase — the implementation is Claude's, reviewed, tested and directed by a human, over a
 series of sessions.
 
-[`handoff/DECISIONS.md`](handoff/DECISIONS.md) is the running record of every decision that
+[`spec/DECISIONS.md`](spec/DECISIONS.md) is the running record of every decision that
 isn't in the original spec, and why. It is the best place to start if you want to know how
 something behaves or why it works the way it does.
 
