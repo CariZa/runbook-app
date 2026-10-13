@@ -7,6 +7,11 @@ It was built to replace the usual pattern of keeping a runbook in a doc and copy
 commands into a terminal one by one — losing, every time, the record of what was actually run
 and what it printed.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="Runbook showing a disk-pressure runbook with filled-in blanks, step results and the terminal output of the selected step" src="docs/screenshot-light.png">
+</picture>
+
 ## What it does
 
 - **Steps, not scripts.** A runbook is a list of named steps. Each is either a shell command
