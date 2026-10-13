@@ -11,3 +11,6 @@ app/frontend/wailsjs/
 
 # Local handover archives
 handover.zip
+
+# Personal runbooks (backed up to a private repo, never this public one)
+runbooks/
