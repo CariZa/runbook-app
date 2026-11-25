@@ -54,6 +54,161 @@ cd app && wails build
 
 The bundle lands in `app/build/bin/runbook.app`.
 
+## Writing a runbook
+
+A runbook is one Markdown file. Build it step by step in the app, write it by hand, or have an
+AI write it and paste the result in.
+
+### The format
+
+````markdown
+---
+name: disk-pressure
+cwd: ~
+---
+
+Free up space when a volume fills up. Work top to bottom; stop at the destructive step and
+check with the team.
+
+## 1. Check free space on the volume
+
+```sh
+df -h {{mount}}
+```
+
+## 2. Find the biggest directories
+
+```sh
+du -sh {{mount}}/* 2>/dev/null | sort -rh | head -5
+```
+
+## 3. Before you delete anything
+
+> Make sure nothing still has these files open. If the volume backs a database, stop here
+> and page the storage on-call.
+
+## 4. Delete logs older than the cutoff
+
+```yaml meta
+destructive: true
+```
+
+```sh
+find {{mount}} -maxdepth 2 -name '*.log' -mtime +{{days}} -delete
+```
+````
+
+- **Front matter** names the runbook and sets `cwd`, the directory its commands start in (`~`
+  if you leave it out). The app adds more settings here when you change them in Settings.
+- **Text before the first step** is the runbook's description.
+- **`## N. Title`** starts a step. The numbers are corrected on save, so don't worry about them.
+- **A command step** is the first code block under the heading, tagged `sh`, `bash`, `shell`,
+  `zsh`, `console` or left untagged. The whole block runs as one step, in `bash`.
+- **A note step** is a blockquote with no code block: a manual check, a warning, who to call.
+- **`{{name}}` is a blank**, filled in when you run the step (letters, digits, `-` and `_`).
+  The value is shell-quoted for you, so write `{{mount}}`, not `"{{mount}}"`.
+- **Step settings** go in a `yaml meta` block between the heading and the command.
+- Anything else under a step, such as a paragraph or a block of sample output, is kept in the
+  file but never run.
+
+| Step setting           | What it does                                                        |
+| ---------------------- | ------------------------------------------------------------------- |
+| `destructive: true`    | Asks for confirmation before the step runs                          |
+| `continueOnFail: true` | Carries on with the run if this step fails                          |
+| `skipInRunAll: true`   | Leaves the step out of **Run all**; it runs only when you click ▶   |
+| `timeoutSec: 300`      | Stops the step after that many seconds; `null` for no limit (default 60) |
+| `cwd: /some/path`      | Runs this step from a different directory                           |
+| `recordOutput: false`  | Doesn't keep the step's output, for commands that print secrets     |
+
+### Getting it into the app
+
+- **A whole runbook:** click **+ New** and name it, then **Edit steps…**, paste over the text
+  and choose **Replace runbook** (⌘⏎). Text that doesn't parse is refused with the reason, and
+  nothing changes. The runbook keeps the name you gave it, whatever `name` the pasted text has.
+- **More steps for a runbook you have open:** **Paste steps…** is more forgiving. It also takes
+  numbered lists and copied terminal sessions, and shows what it found before adding anything.
+- **As a file:** save it as `~/runbooks/<name>/runbook.md` and click ↻ in the Library.
+
+### Asking an AI to write one
+
+Fill in the second paragraph and give this to your assistant. Paste what comes back into
+**Edit steps…**.
+
+`````text
+Write a runbook for the Runbook app, which runs Markdown runbooks as ordered shell steps.
+Reply with only the runbook, in one code block fenced with four backticks so that the
+three-backtick fences inside it survive.
+
+What the runbook is for:
+<describe the task, the system it runs against, and anything that must not be touched>
+
+Format:
+- Start with front matter holding `name` (lowercase letters, digits and hyphens) and `cwd`
+  (the directory commands start in; use ~ if unsure).
+- After the front matter, one or two sentences on when to use the runbook.
+- Each step is a heading "## N. Title" followed by exactly one ```sh block.
+- A step with a blockquote ("> text") and no code block is a note. Use notes for manual
+  checks, warnings and who to escalate to.
+- For a value I have to supply when I run it, write a blank like {{namespace}} (letters,
+  digits, - and _). The app shell-quotes the value, so never put quotes around a blank and
+  never use placeholders like <namespace>.
+- For any step that changes or deletes something, put this block between the heading and
+  the command:
+  ```yaml meta
+  destructive: true
+  ```
+  The same block can also hold continueOnFail: true (carry on if the step fails),
+  skipInRunAll: true (only run when clicked), timeoutSec: <seconds, or null for no limit>
+  and recordOutput: false (for steps that print secrets).
+
+How steps run:
+- In order, in one /bin/bash session (bash 3.2 on macOS), so cd, export and shell functions
+  carry over to later steps. Don't use bash 4+ features.
+- A run stops at the first step that exits non-zero, unless that step has
+  continueOnFail: true.
+- There is no terminal attached: no editors, pagers, prompts or watch. Every command must
+  finish by itself.
+- A step is stopped after 60 seconds unless it sets timeoutSec.
+
+Good practice:
+- One action per step, with a title that says what it does.
+- Read-only checks first, then changes, then a step that verifies each change.
+- No secrets in commands; read them from the environment.
+
+Example:
+
+---
+name: restart-stuck-deployment
+cwd: ~
+---
+
+Use when a deployment's pods are stuck and a restart is the agreed fix.
+
+## 1. Show pods that aren't running
+
+```sh
+kubectl get pods -n {{namespace}} | grep -v Running
+```
+
+## 2. Confirm before restarting
+
+> Check the last deploy time with the owning team. Don't restart during a rollout.
+
+## 3. Restart the deployment
+
+```yaml meta
+destructive: true
+timeoutSec: 300
+```
+
+```sh
+kubectl rollout restart deploy/{{deployment}} -n {{namespace}}
+kubectl rollout status deploy/{{deployment}} -n {{namespace}}
+```
+`````
+
+An AI-written runbook is still commands that run as you, so read it before you run it.
+
 ## Where your data lives
 
 Everything is files under `~/runbooks`, one directory per runbook:
