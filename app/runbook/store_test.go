@@ -524,3 +524,44 @@ func TestMoveFolder(t *testing.T) {
 		t.Error("a refused deep move moved things anyway")
 	}
 }
+
+func TestReplaceSourceKeepsIDsAndRefusesBadText(t *testing.T) {
+	s := newStore(t)
+	writeDoc(t, s, "rb", specExample)
+	before, _ := s.Load("rb")
+
+	edited := strings.Replace(specExample, "grep -v Running", "grep -v Completed", 1)
+	if edited == specExample {
+		t.Fatal("test edit did not apply")
+	}
+	if err := s.ReplaceSource("rb", []byte(edited)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.Load("rb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Steps) != len(before.Steps) {
+		t.Fatalf("steps = %d, want %d", len(after.Steps), len(before.Steps))
+	}
+	for i := range before.Steps {
+		if after.Steps[i].ID != before.Steps[i].ID {
+			t.Errorf("step %d id changed: %s -> %s", i+1, before.Steps[i].ID, after.Steps[i].ID)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(s.dir("rb"), docFile)); string(got) != edited {
+		t.Errorf("file is not the pasted text:\n%s", got)
+	}
+
+	for _, bad := range []string{"", "  \n", "---\nname: rb\n"} {
+		if err := s.ReplaceSource("rb", []byte(bad)); err == nil {
+			t.Errorf("ReplaceSource(%q) = nil, want an error", bad)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(s.dir("rb"), docFile)); string(got) != edited {
+		t.Error("refused text still changed the file")
+	}
+	if err := s.ReplaceSource("nope", []byte(edited)); err == nil {
+		t.Error("replacing a missing runbook should fail")
+	}
+}

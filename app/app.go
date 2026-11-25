@@ -45,6 +45,7 @@ type App struct {
 	sharedDir string
 
 	openName  string               // runbook shown in the UI
+	openMod   time.Time            // its runbook.md mtime as the app last read or wrote it
 	lastPrune map[string]time.Time // per runbook, for daily runs.log pruning
 }
 

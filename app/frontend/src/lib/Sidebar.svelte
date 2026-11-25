@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import type { Summary, Version } from './types'
 
@@ -23,6 +23,7 @@
     onMoveFolder: (ref: string, folder: string) => void
     onOpenLog: (reveal: boolean) => void
     onOpenSettings: () => void
+    onRefresh: () => void
   }
   let {
     library,
@@ -42,6 +43,7 @@
     onMoveFolder,
     onOpenLog,
     onOpenSettings,
+    onRefresh,
   }: Props = $props()
 
   const leaf = (ref: string) => ref.slice(ref.lastIndexOf('/') + 1)
@@ -53,7 +55,8 @@
   const runbooksIn = (ref: string) =>
     library.filter((r) => r.folder === ref).sort((a, b) => byLeaf(a.name, b.name))
 
-  // Collapsed folders are remembered; a folder holding the open runbook always shows.
+  // Collapsed folders are remembered. Opening a runbook expands the folders it sits in;
+  // after that they collapse like any other.
   const collapsed = new SvelteSet<string>(loadCollapsed())
   function loadCollapsed(): string[] {
     try {
@@ -65,13 +68,24 @@
   function toggle(f: string) {
     if (collapsed.has(f)) collapsed.delete(f)
     else collapsed.add(f)
+    remember()
+  }
+  function remember() {
     try {
       localStorage.setItem('collapsedFolders', JSON.stringify([...collapsed]))
     } catch {
       // not remembered: fine
     }
   }
-  const isOpen = (f: string) => !collapsed.has(f) || current.startsWith(f + '/')
+  const isOpen = (f: string) => !collapsed.has(f)
+  $effect(() => {
+    const ref = current
+    untrack(() => {
+      let changed = false
+      for (let f = parentOf(ref); f; f = parentOf(f)) changed = collapsed.delete(f) || changed
+      if (changed) remember()
+    })
+  })
 
   // Inline name box, for creating a runbook or folder and for renaming a folder.
   let editing = $state<{ kind: 'runbook' | 'folder' | 'rename'; folder: string } | null>(null)
@@ -99,15 +113,22 @@
   }
 
   // Dragging: runbooks and folders both move; a folder can't go into itself or its own
-  // descendant (the backend refuses too).
+  // descendant (the backend refuses too). This is done with plain mouse events, not HTML5
+  // drag and drop: in the macOS web view a native drag can't start on the second press of a
+  // double-click (so a row you'd just clicked wouldn't lift), and it leaves :hover stuck.
   let drag = $state<{ ref: string; isFolder: boolean } | null>(null)
   let dropTarget = $state<string | null>(null)
+  let ghost = $state({ x: 0, y: 0 })
+  let navEl = $state<HTMLElement>()
+  let press: { ref: string; isFolder: boolean; x: number; y: number } | null = null
+  let justDragged = false // swallows the click that follows a drag
 
-  function dragStart(e: DragEvent, ref: string, isFolder: boolean) {
-    if (locked || !e.dataTransfer) return
-    drag = { ref, isFolder }
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', ref)
+  function pressRow(e: MouseEvent, ref: string, isFolder: boolean) {
+    if (locked || e.button !== 0) return
+    press = { ref, isFolder, x: e.clientX, y: e.clientY }
+    window.addEventListener('mousemove', dragMove)
+    window.addEventListener('mouseup', dragUp)
+    window.addEventListener('keydown', dragKey, true)
   }
   function canDrop(target: string): boolean {
     if (!drag) return false
@@ -122,23 +143,55 @@
     for (const f of folders) if (f.startsWith(ref + '/')) deepest = Math.max(deepest, depth(f) - depth(ref) + 1)
     return deepest
   }
-  function dragOver(e: DragEvent, target: string) {
-    if (!canDrop(target)) return
-    e.preventDefault()
-    dropTarget = target
-  }
-  function drop(e: DragEvent, target: string) {
-    e.preventDefault()
-    if (drag && canDrop(target)) {
-      if (drag.isFolder) onMoveFolder(drag.ref, target)
-      else onMove(drag.ref, target)
+  function dragMove(e: MouseEvent) {
+    if (!press) return
+    if (!drag) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return
+      drag = { ref: press.ref, isFolder: press.isFolder }
     }
-    drag = null
-    dropTarget = null
+    e.preventDefault()
+    ghost = { x: e.clientX, y: e.clientY }
+    // Scroll a long library when the pointer nears its top or bottom edge.
+    if (navEl) {
+      const r = navEl.getBoundingClientRect()
+      if (e.clientY < r.top + 24) navEl.scrollTop -= 12
+      else if (e.clientY > r.bottom - 24) navEl.scrollTop += 12
+    }
+    // A folder takes drops over its whole block, header and contents; the innermost folder
+    // under the pointer decides. Anywhere else in the Library is the top level ("").
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-drop]')
+    const target = over?.getAttribute('data-drop') ?? null
+    dropTarget = target !== null && canDrop(target) ? target : null
   }
-  function dragEnd() {
+  function dragUp() {
+    const d = drag
+    const target = dropTarget
+    endDrag()
+    if (!d) return
+    justDragged = true
+    setTimeout(() => (justDragged = false))
+    if (target === null) return
+    if (d.isFolder) onMoveFolder(d.ref, target)
+    else onMove(d.ref, target)
+  }
+  function dragKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !drag) return
+    e.preventDefault()
+    e.stopPropagation()
+    endDrag()
+  }
+  function endDrag() {
+    press = null
     drag = null
     dropTarget = null
+    window.removeEventListener('mousemove', dragMove)
+    window.removeEventListener('mouseup', dragUp)
+    window.removeEventListener('keydown', dragKey, true)
+  }
+  function swallowClick(e: MouseEvent) {
+    if (!justDragged) return
+    e.preventDefault()
+    e.stopPropagation()
   }
 
   function time(iso: string): string {
@@ -150,18 +203,13 @@
   }
 </script>
 
-<nav class="sidebar">
-  <section>
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <h3
-      class:drop={dropTarget === ''}
-      ondragover={(e) => dragOver(e, '')}
-      ondragleave={() => dropTarget === '' && (dropTarget = null)}
-      ondrop={(e) => drop(e, '')}
-      title={drag ? 'Drop here to move to the top level' : ''}
-    >
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+<nav class="sidebar" class:dragging-any={drag !== null} bind:this={navEl} onclickcapture={swallowClick}>
+  <section class="library" class:drop={dropTarget === ''} data-drop="">
+    <h3>
       Library
       <span class="head-actions">
+        <button class="link small" onclick={onRefresh} title="Re-read ~/runbooks from disk" aria-label="Refresh library">↻</button>
         <button class="link small" onclick={() => startEdit('folder', '')} disabled={locked}>+ Folder</button>
         <button class="link small" onclick={() => startEdit('runbook', '')} disabled={locked}>+ New</button>
       </span>
@@ -186,12 +234,10 @@
           class="rb"
           class:current={rb.name === current}
           style="padding-left: {6 + level * 12}px"
-          draggable={!locked}
-          ondragstart={(e) => dragStart(e, rb.name, false)}
-          ondragend={dragEnd}
+          onmousedown={(e) => pressRow(e, rb.name, false)}
           onclick={() => onOpen(rb.name)}
           disabled={locked && rb.name !== current}
-          title="{rb.steps} steps · edited {time(rb.modified)}{locked ? '' : ' · drag onto a folder to move'}"
+          title="{rb.steps} steps · edited {time(rb.modified)}{locked ? '' : ' · drag onto a folder, or below the folders for the top level'}"
         >
           {leaf(rb.name)}
         </button>
@@ -206,24 +252,15 @@
     {/snippet}
 
     {#snippet folderNode(f: string, level: number)}
-      <li class="folder-row" class:dragging={drag?.ref === f}>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="folder"
-          class:drop={dropTarget === f}
-          ondragover={(e) => dragOver(e, f)}
-          ondragleave={() => dropTarget === f && (dropTarget = null)}
-          ondrop={(e) => drop(e, f)}
-        >
+      <li class="folder-row" class:dragging={drag?.ref === f} class:drop={dropTarget === f} data-drop={f}>
+        <div class="folder">
           {#if editing?.kind === 'rename' && editing.folder === f}
             {@render nameBox('folder name ⏎', level)}
           {:else}
             <button
               class="fold"
               style="padding-left: {2 + level * 12}px"
-              draggable={!locked}
-              ondragstart={(e) => dragStart(e, f, true)}
-              ondragend={dragEnd}
+              onmousedown={(e) => pressRow(e, f, true)}
               onclick={() => toggle(f)}
               ondblclick={() => !locked && startEdit('rename', f)}
               aria-expanded={isOpen(f)}
@@ -315,7 +352,46 @@
 
 </nav>
 
+{#if drag}
+  <div class="ghost" style="left: {ghost.x + 12}px; top: {ghost.y + 8}px">
+    {drag.isFolder ? '▸ ' : ''}{leaf(drag.ref)}
+    <span class="ghost-to">
+      {#if dropTarget === null}· not here{:else if dropTarget === ''}→ top level{:else}→ {dropTarget}{/if}
+    </span>
+  </div>
+{/if}
+
 <style>
+  .ghost {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+  .ghost-to {
+    font-weight: normal;
+    color: var(--muted);
+  }
+  .sidebar.dragging-any {
+    cursor: grabbing;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .sidebar.dragging-any :global(button) {
+    cursor: grabbing;
+  }
+  /* While dragging, only the drop target is marked: no hover highlight on rows passed over. */
+  .sidebar.dragging-any .rb:hover:not(.current) {
+    background: none;
+  }
   .app-settings {
     margin-top: auto;
   }
@@ -382,10 +458,10 @@
     display: flex;
     gap: 6px;
   }
-  h3.drop,
-  .folder.drop {
+  .library.drop,
+  .folder-row.drop {
     outline: 1px dashed var(--accent);
-    outline-offset: 1px;
+    outline-offset: -1px;
     border-radius: 4px;
   }
   .folder {

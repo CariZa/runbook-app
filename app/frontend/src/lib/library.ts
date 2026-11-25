@@ -21,7 +21,10 @@ import {
   LogEvent,
   OpenAuditLog,
   OpenRunbook,
+  RunbookChanged,
   RenameRunbook,
+  ReplaceRunbook,
+  RunbookSource,
   SaveStepArgs,
   SaveRunbook,
   SaveVersion,
@@ -55,6 +58,12 @@ export const deleteFolder = (name: string): Promise<string> => DeleteFolder(name
 /** Moves a runbook into folder ("" = top level); resolves to its new ref. */
 export const moveRunbook = (ref: string, folder: string): Promise<string> => MoveRunbook(ref, folder)
 export const openRunbook = async (name: string): Promise<Opened> => (await OpenRunbook(name)) as any
+/** The runbook as runbook.md text. */
+export const runbookSource = (doc: Runbook): Promise<string> => RunbookSource(asDoc(doc))
+/** Overwrites the whole runbook with text; rejects (changing nothing) if it doesn't parse. */
+export const replaceRunbook = (name: string, text: string): Promise<void> => ReplaceRunbook(name, text).then(() => undefined)
+/** True when the open runbook's file was edited outside the app since it was loaded or saved. */
+export const runbookChanged = (name: string): Promise<boolean> => RunbookChanged(name)
 export const createRunbook = async (name: string): Promise<Runbook> => (await CreateRunbook(name)) as any
 export const saveRunbook = (name: string, doc: Runbook): Promise<void> => SaveRunbook(name, asDoc(doc))
 /** Renames within the runbook's folder; resolves to the new ref. */

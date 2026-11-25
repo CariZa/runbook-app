@@ -350,6 +350,36 @@ func (s *Store) Save(dirName string, d Doc) error {
 	return s.writeState(dirName, st)
 }
 
+// Modified is when runbook.md was last written (zero if it can't be read).
+func (s *Store) Modified(ref string) time.Time {
+	fi, err := os.Stat(filepath.Join(s.dir(ref), docFile))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
+// ReplaceSource overwrites runbook.md with src, a whole runbook as text. It refuses text
+// that doesn't parse, leaving the file alone. Load afterwards to get step ids assigned.
+func (s *Store) ReplaceSource(ref string, src []byte) error {
+	if err := ValidRef(ref); err != nil {
+		return err
+	}
+	if !s.isRunbook(ref) {
+		return fmt.Errorf("runbook %q not found", ref)
+	}
+	if len(bytes.TrimSpace(src)) == 0 {
+		return errors.New("nothing to save: the text is empty")
+	}
+	if _, err := Parse(src); err != nil {
+		return err
+	}
+	if !bytes.HasSuffix(src, []byte("\n")) {
+		src = append(src, '\n')
+	}
+	return writeAtomic(filepath.Join(s.dir(ref), docFile), src)
+}
+
 // Create makes a new runbook at ref ("name" or "folder/name"; the folder must exist).
 // d.Name is set to the ref's name. It fails if the name is taken.
 func (s *Store) Create(ref string, d Doc) error {

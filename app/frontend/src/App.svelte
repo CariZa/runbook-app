@@ -8,6 +8,7 @@
   import RunbookSettings from './lib/RunbookSettings.svelte'
   import ExportSheet from './lib/ExportSheet.svelte'
   import PasteDialog from './lib/PasteDialog.svelte'
+  import EditDialog from './lib/EditDialog.svelte'
   import NotionDialog from './lib/NotionDialog.svelte'
   import AppSettings from './lib/AppSettings.svelte'
   import { loadExportPrefs } from './lib/exportPrefs'
@@ -47,6 +48,9 @@
     renameRunbook,
     saveStepArgs,
     saveRunbook,
+    runbookChanged,
+    runbookSource,
+    replaceRunbook,
     saveVersion,
   } from './lib/library'
   import type {
@@ -127,6 +131,61 @@
     library = lib.runbooks
     folders = lib.folders
   }
+
+  // ↻ in the Library: pick up runbooks added or edited outside the app, including the open one.
+  async function refresh() {
+    try {
+      await refreshLibrary()
+      if (runActive) return
+      if (current && !library.some((r) => r.name === current)) {
+        const next = library[0]?.name
+        if (next) await load(next)
+        else showEmptyLibrary()
+      } else if (current && !editingId && !draft) {
+        await saveChain
+        await load(current)
+      } else if (!current && library[0]) {
+        await load(library[0].name)
+      }
+      runMessage = 'Library refreshed from disk.'
+    } catch (err) {
+      runMessage = `Couldn't refresh: ${err}`
+    }
+  }
+
+  // Edits made to the open runbook's file outside the app (an editor, Claude) are picked up
+  // on their own: checked every few seconds and on coming back to the window. Nothing is
+  // reloaded mid-run or while a step editor or dialog is open; it catches up afterwards.
+  let reloading = false
+  async function reloadIfChanged() {
+    if (reloading || !current || runActive || editingId || draft || editSource !== null || showPaste) return
+    reloading = true
+    try {
+      await saveChain
+      const name = current
+      if (saveState !== 'error' && (await runbookChanged(name)) && name === current) {
+        await load(name)
+        await refreshLibrary()
+        if (current === name && !loadError) runMessage = 'Reloaded: the runbook file changed on disk.'
+      }
+    } catch {
+      // try again on the next tick
+    } finally {
+      reloading = false
+    }
+  }
+  $effect(() => {
+    const onFocus = () => {
+      refreshLibrary().catch(() => {}) // new runbooks show up in the list
+      reloadIfChanged()
+    }
+    const timer = setInterval(reloadIfChanged, 3000)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  })
 
   async function load(name: string) {
     try {
@@ -841,6 +900,25 @@
     }
   }
 
+  // "Edit steps…": the whole runbook as text, saved back over runbook.md.
+  let editSource = $state<string | null>(null)
+  async function openEditSource() {
+    try {
+      await saveChain
+      editSource = await runbookSource($state.snapshot(runbook) as Runbook)
+    } catch (err) {
+      runMessage = `Couldn't open the editor: ${err}`
+    }
+  }
+  async function replaceSource(text: string) {
+    await saveChain
+    await replaceRunbook(current, text) // throws when refused; the dialog shows why
+    editSource = null
+    await load(current)
+    await refreshLibrary()
+    runMessage = `Replaced the runbook (${runbook.steps.length} step${runbook.steps.length === 1 ? '' : 's'}).`
+  }
+
   function addPasted(steps: StepT[]) {
     showPaste = false
     const at = runbook.steps.length
@@ -916,6 +994,7 @@
     auditOn={runbook.running.audit}
     onOpenLog={openLog}
     onOpenSettings={() => (showAppSettings = true)}
+    onRefresh={refresh}
     locked={runActive}
     onOpen={requestOpen}
     onCreate={create}
@@ -955,6 +1034,9 @@
             >Paste steps…</button
           >
           <button onclick={() => openDraft(runbook.steps.length)} disabled={runActive || draft !== null}>+ Add step</button>
+          <button onclick={openEditSource} disabled={runActive || draft !== null || editingId !== null} title="Edit the whole runbook as text; saving replaces it"
+            >Edit steps…</button
+          >
           {#if runbook.notion?.url}
             <button class="link" onclick={() => openInBrowser(runbook.notion.url)} title={runbook.notion.url}>Open in Notion ↗</button>
           {/if}
@@ -1155,6 +1237,10 @@
 
 {#if showPaste}
   <PasteDialog onAdd={addPasted} onCancel={() => (showPaste = false)} />
+{/if}
+
+{#if editSource !== null}
+  <EditDialog name={current} source={editSource} onSave={replaceSource} onCancel={() => (editSource = null)} />
 {/if}
 
 {#if showNotion}

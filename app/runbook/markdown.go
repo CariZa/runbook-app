@@ -229,6 +229,11 @@ func applyFrontMatter(doc *Doc, raw string) error {
 		return fmt.Errorf("front-matter: %w", err)
 	}
 	doc.Name, doc.Cwd, doc.Version, doc.Parent = fm.Name, fm.Cwd, fm.Version, fm.Parent
+	if doc.Cwd == "" {
+		// No path given (hand-written or pasted front matter): run from the home directory,
+		// like a new runbook, rather than refusing to run.
+		doc.Cwd = "~"
+	}
 	var err error
 	if doc.Defaults.Destructive, err = boolField(fm.Defaults, "destructive", false); err != nil {
 		return err

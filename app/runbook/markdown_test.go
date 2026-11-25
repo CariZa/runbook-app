@@ -197,3 +197,15 @@ func TestNotionLinkRoundTrips(t *testing.T) {
 		t.Errorf("serialised:\n%s", out)
 	}
 }
+
+func TestMissingOrEmptyCwdDefaultsToHome(t *testing.T) {
+	for _, fm := range []string{"name: x\n", "name: x\ncwd: \"\"\n"} {
+		d, err := Parse([]byte("---\n" + fm + "---\n\n## 1. Hi\n\n```sh\necho hi\n```\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Cwd != "~" {
+			t.Errorf("front matter %q: cwd = %q, want ~", fm, d.Cwd)
+		}
+	}
+}

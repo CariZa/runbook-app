@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -179,6 +180,7 @@ func (a *App) OpenRunbook(name string) (Opened, error) {
 	a.mu.Lock()
 	switched := a.openName != name
 	a.openName = name
+	a.openMod = a.store.Modified(name)
 	a.mu.Unlock()
 	if switched {
 		a.ResetShell()
@@ -228,7 +230,66 @@ func (a *App) CreateRunbook(name string) (runbook.Doc, error) {
 
 // SaveRunbook is the autosave: it writes runbook.md. It never creates a version.
 func (a *App) SaveRunbook(name string, doc runbook.Doc) error {
-	return a.store.Save(name, doc)
+	err := a.store.Save(name, doc)
+	a.noteWritten(name)
+	return err
+}
+
+// noteWritten records that the app itself just wrote name's runbook.md, so that write isn't
+// mistaken for an outside edit.
+func (a *App) noteWritten(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.openName == name {
+		a.openMod = a.store.Modified(name)
+	}
+}
+
+// RunbookChanged reports whether name, the open runbook, had its file changed on disk by
+// something other than the app (an editor, a script, Claude) since the app last read or
+// wrote it. The UI polls this and reloads.
+func (a *App) RunbookChanged(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if name == "" || a.openName != name || a.cancel != nil {
+		return false
+	}
+	mod := a.store.Modified(name)
+	return !mod.IsZero() && !mod.Equal(a.openMod)
+}
+
+// RunbookSource returns doc as runbook.md text, exactly as the autosave writes it.
+func (a *App) RunbookSource(doc runbook.Doc) string {
+	return string(runbook.Serialize(doc))
+}
+
+// ReplaceRunbook overwrites the whole runbook with text ("Edit steps…"). Text that doesn't
+// parse is refused and nothing changes. Steps that are unchanged keep their saved output.
+func (a *App) ReplaceRunbook(name, text string) (Opened, error) {
+	a.mu.Lock()
+	running := a.cancel != nil
+	a.mu.Unlock()
+	if running {
+		return Opened{}, errors.New("stop the current run first")
+	}
+	if err := a.store.ReplaceSource(name, []byte(text)); err != nil {
+		return Opened{}, err
+	}
+	doc, err := a.store.Load(name)
+	if err != nil {
+		return Opened{}, err
+	}
+	// The directory is the runbook's name; pasted front matter doesn't rename it.
+	if _, leaf := runbook.SplitRef(name); doc.Name != leaf {
+		doc.Name = leaf
+		if err := a.store.Save(name, doc); err != nil {
+			return Opened{}, err
+		}
+	}
+	if doc.Running.Audit {
+		a.appendAudit(name, runbook.AuditEntry{Event: "runbook.replace", Message: fmt.Sprintf("replaced from pasted text (%d steps)", len(doc.Steps))})
+	}
+	return a.OpenRunbook(name)
 }
 
 // RenameRunbook renames the runbook's directory and front-matter name.
@@ -254,6 +315,7 @@ type VersionSaved struct {
 // SaveVersion snapshots the runbook to versions/vN.md (explicit only, never automatic).
 func (a *App) SaveVersion(name string, doc runbook.Doc) (VersionSaved, error) {
 	d, err := a.store.SaveVersion(name, doc)
+	a.noteWritten(name)
 	if err != nil {
 		return VersionSaved{}, err
 	}
